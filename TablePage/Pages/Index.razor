@@ -1,0 +1,112 @@
+﻿@page "/EXT/CommandExpounder"
+@using System.Data
+@using Microsoft.Data.SqlClient
+
+@if (Loaded)
+{
+    <PageTitle>@PageTitleRow["PageTitle"].ToString()</PageTitle>
+    <MudRTLProvider RightToLeft=@true Class="">
+        <MudText Class="gap-9" Align="Align.Center" Typo="Typo.h5">
+            @PageTitleRow["PageHeader"].ToString()
+        </MudText>
+        <MudTable Class="mt-16" T="DataRow" Items="DataDT.Rows.Cast<DataRow>()" Height="350px" Breakpoint="Breakpoint.Sm" Virtualize="true" FixedHeader="true">
+            <HeaderContent>
+                @foreach (DataColumn column in DataDT.Columns)
+                {
+                    <MudTh>@column.ColumnName</MudTh>
+                }
+            </HeaderContent>
+            <RowTemplate>
+                @foreach (DataColumn column in context.Table.Columns)
+                {
+                    <MudTd DataLabel=@column.ColumnName Class=@ClassRow[column.ColumnName].ToString() Style=@StyleRow[column.ColumnName].ToString()>@context[column]</MudTd>
+                }
+            </RowTemplate>
+        </MudTable>
+    </MudRTLProvider>
+}
+@code {
+    [Parameter][SupplyParameterFromQuery(Name = "Kind")] public string? Kind { get; set; }
+    [Parameter][SupplyParameterFromQuery(Name = "Value")] public string? Value { get; set; }
+
+    private bool Loaded = false;
+    private DataTable DataDT = new();
+    private DataRow StyleRow = new DataTable().NewRow();
+    private DataRow ClassRow = new DataTable().NewRow();
+    private DataRow PageTitleRow = new DataTable().NewRow();
+    protected override async Task OnInitializedAsync()
+    {
+        await base.OnInitializedAsync();
+        var result = await DataList();
+
+        var pageDT = result.First(q => q.Columns[0].ColumnName.Equals("PageTitle", StringComparison.OrdinalIgnoreCase));
+        var classDT = result.First(q => q.Columns[0].ColumnName.Equals("DefaultClass", StringComparison.OrdinalIgnoreCase));
+        var styleDT = result.First(q => q.Columns[0].ColumnName.Equals("DefaultStyle", StringComparison.OrdinalIgnoreCase));
+
+        DataDT = result.First(q => q != classDT && q != styleDT && q != pageDT);
+
+        classDT = Clone(classDT);
+        styleDT = Clone(styleDT);
+
+        Normalizer(classDT, "DefaultClass");
+        Normalizer(styleDT, "DefaultStyle");
+
+        ClassRow = classDT.Rows[0];
+        StyleRow = styleDT.Rows[0];
+        PageTitleRow = pageDT.Rows[0];
+
+        Loaded = true;
+    }
+    private void Normalizer(DataTable dt, string DefaultColumnName)
+    {
+        foreach (DataColumn column in DataDT.Columns)
+        {
+            var dtColumn = dt.Columns.Cast<DataColumn>().FirstOrDefault(q => q.ColumnName == column.ColumnName);
+            if (dtColumn is null) dtColumn = dt.Columns.Add(column.ColumnName, typeof(string));
+            dtColumn.ReadOnly = false;
+            foreach (DataRow dr in dt.Rows)
+                if (string.IsNullOrEmpty(Convert.ToString(dr[column.ColumnName])))
+                {
+                    dr[column.ColumnName] = dr[DefaultColumnName];
+
+                }
+        }
+    }
+    private DataTable Clone(DataTable dt)
+    {
+        var result = new DataTable();
+        foreach (DataColumn column in dt.Columns)
+            result.Columns.Add(column.ColumnName, column.DataType);
+        foreach (DataRow row in dt.Rows)
+            result.Rows.Add(row.ItemArray);
+        return result;
+    }
+    private async Task<IList<DataTable>> DataList()
+    {
+        //https://localhost:44393/EXT/CommandExpounder?Kind=4555546&Value=741
+        using var sqlCon = new SqlConnection("Server=.;Database=TableList;Encrypt=False; Integrated Security=True");
+        using var sqlCom = sqlCon.CreateCommand();
+        sqlCom.CommandType = CommandType.StoredProcedure;
+        sqlCom.CommandText = "SP_CommandExpounder";
+        sqlCom.Parameters.AddWithValue("Kind", Kind);
+        sqlCom.Parameters.AddWithValue("Value", Value);
+        var result = new List<DataTable>();
+        await sqlCon.OpenAsync();
+        try
+        {
+            using var sqlReader = await sqlCom.ExecuteReaderAsync();
+            while (!sqlReader.IsClosed)
+            {
+                var resultDT = new DataTable();
+                resultDT.Load(sqlReader, LoadOption.Upsert);
+                result.Add(resultDT);
+            }
+            await sqlReader.CloseAsync();
+            return result;
+        }
+        finally
+        {
+            await sqlCon.CloseAsync();
+        }
+    }
+}
